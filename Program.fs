@@ -108,7 +108,8 @@ let downloadBookArchieve (client : WebClient) (folder : String) bookId bookName 
     client.DownloadFile((DownloadUrl(bookId) |> createUrl), bookLocation)
     bookLocation
     
-let downloadBook rootLocation downloaderBase seriesName book  =
+let downloadBook rootLocation downloaderBase seriesName (book : Book)=
+    printfn "Downloading '%s'" book.name
     let seriesLocation  = Path.Combine ( rootLocation, seriesName)
     let downloader = downloaderBase seriesLocation
     Directory.CreateDirectory seriesLocation |> ignore
@@ -126,7 +127,8 @@ let downloadBook rootLocation downloaderBase seriesName book  =
             let bookLocation = Path.Combine(seriesLocation, bookFullName)
             File.Move (archievedFileLocation, bookLocation)
         | None ->
-            ()
+            printfn "Was not able to find book in the archieve"
+    printfn "Downloaded '%s'" book.name
 
 [<EntryPoint>]
 let main args =
