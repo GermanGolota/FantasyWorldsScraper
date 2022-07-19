@@ -218,11 +218,12 @@ let main _ =
 
                     List.iter
                         (fun series ->
-                            List.iter
-                                (fun book ->
-                                    (downloadBook (Path.Combine(location, series.name)) downloaderBase) book
-                                    |> Async.RunSynchronously)
-                                series.books)
+                            List.map
+                                (fun book -> (downloadBook (Path.Combine(location, series.name)) downloaderBase) book)
+                                series.books
+                            |> Async.Parallel
+                            |> Async.RunSynchronously
+                            |> ignore)
                         serieses
                 | None -> printfn "Failed to find any books")
         )
