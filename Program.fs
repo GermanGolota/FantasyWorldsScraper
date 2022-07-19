@@ -108,9 +108,8 @@ let downloadBookArchieve (client : WebClient) (folder : String) bookId bookName 
     client.DownloadFile((DownloadUrl(bookId) |> createUrl), bookLocation)
     bookLocation
     
-let downloadBook rootLocation downloaderBase seriesName (book : Book)=
+let downloadBook seriesLocation downloaderBase (book : Book)=
     printfn "Downloading '%s'" book.name
-    let seriesLocation  = Path.Combine ( rootLocation, seriesName)
     let downloader = downloaderBase seriesLocation
     Directory.CreateDirectory seriesLocation |> ignore
     let archieveLocation = downloader book.id book.name
@@ -171,7 +170,7 @@ let main args =
                 Console.WriteLine($"Saving files to {location}")
                 use client = new WebClient()
                 let downloaderBase = downloadBookArchieve client 
-                List.iter (fun series -> List.iter (downloadBook location downloaderBase series.name ) series.books) serieses
+                List.iter (fun series -> List.iter (downloadBook (Path.Combine ( location, series.name)) downloaderBase) series.books) serieses
                 0
             | None -> 1
            
