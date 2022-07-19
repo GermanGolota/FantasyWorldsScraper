@@ -102,11 +102,16 @@ let processItemsList items : Series list =
     seriesDict |> List.ofSeq |> List.map (fun pair -> {name = pair.Key; books = pair.Value})
 
     
+let downloadFile (client : WebClient) (url : String) (folder : String) (fileName : String) =
+    let fileLocation =  Path.Combine (folder, fileName)
+    client.DownloadFile(url, fileLocation)
+    fileLocation
+
+
 let downloadBookArchieve (client : WebClient) (folder : String) bookId bookName =
     let bookFileName = $"{bookName}.zip"
-    let bookLocation =  Path.Combine (folder, bookFileName)
-    client.DownloadFile((DownloadUrl(bookId) |> createUrl), bookLocation)
-    bookLocation
+    let url = DownloadUrl(bookId) |> createUrl
+    downloadFile client url folder bookFileName
     
 let downloadBook seriesLocation downloaderBase (book : Book)=
     printfn "Downloading '%s'" book.name
