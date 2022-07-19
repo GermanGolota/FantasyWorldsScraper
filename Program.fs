@@ -6,6 +6,7 @@ open System.Collections.Generic
 open System.IO.Compression
 open Cocona
 open Microsoft.Extensions.DependencyInjection
+open System.Net.Http
 
 type UrlType =
     | AuthorPage of authorId: int
@@ -105,12 +106,22 @@ let processItemsList items : Series list =
     |> List.ofSeq
     |> List.map (fun pair -> { name = pair.Key; books = pair.Value })
 
-let downloadFile (client: WebClient) (url: String) (folder: String) (fileName: String) =
+let downloadFile (client: HttpClient) (url: String) (folder: String) (fileName: String) =
     let fileLocation = Path.Combine(folder, fileName)
-    client.DownloadFile(url, fileLocation)
-    fileLocation
 
-let downloadBookArchieve (client: WebClient) (folder: String) bookId bookName =
+    async {
+        let! response = client.GetAsync(url) |> Async.AwaitTask
+        use fs = new FileStream(fileLocation, FileMode.Create)
+
+        let! _ =
+            response.Content.CopyToAsync(fs)
+            |> Async.AwaitTask
+
+        return fileLocation
+    }
+
+
+let downloadBookArchieve (client: HttpClient) (folder: String) bookId bookName =
     let bookFileName = $"{bookName}.zip"
     let url = DownloadUrl(bookId) |> createUrl
     downloadFile client url folder bookFileName
@@ -119,88 +130,102 @@ let downloadBook seriesLocation downloaderBase (book: Book) =
     printfn "Downloading '%s'" book.name
     let downloader = downloaderBase seriesLocation
     Directory.CreateDirectory seriesLocation |> ignore
-    let archieveLocation = downloader book.id book.name
-    let archieve = ZipFile.Open(archieveLocation, ZipArchiveMode.Read)
 
-    let fileNameOption =
-        archieve.Entries
-        |> List.ofSeq
-        |> List.tryExactlyOne
-        |> Option.map (fun entry -> entry.Name)
+    async {
+        let! archieveLocation = downloader book.id book.name
+        let archieve = ZipFile.Open(archieveLocation, ZipArchiveMode.Read)
 
-    archieve.Dispose()
-    ZipFile.ExtractToDirectory(archieveLocation, seriesLocation)
-    File.Delete(archieveLocation)
+        let fileNameOption =
+            archieve.Entries
+            |> List.ofSeq
+            |> List.tryExactlyOne
+            |> Option.map (fun entry -> entry.Name)
 
-    match fileNameOption with
-    | Some fileName ->
-        let archievedFileLocation = Path.Combine(seriesLocation, fileName)
-        let extension = Path.GetExtension(fileName)
-        let bookFullName = Path.ChangeExtension(book.name, extension)
-        let bookLocation = Path.Combine(seriesLocation, bookFullName)
-        File.Move(archievedFileLocation, bookLocation)
-    | None -> printfn "Was not able to find book in the archieve"
+        archieve.Dispose()
+        ZipFile.ExtractToDirectory(archieveLocation, seriesLocation)
+        File.Delete(archieveLocation)
 
-    printfn "Downloaded '%s'" book.name
+        match fileNameOption with
+        | Some fileName ->
+            let archievedFileLocation = Path.Combine(seriesLocation, fileName)
+            let extension = Path.GetExtension(fileName)
+            let bookFullName = Path.ChangeExtension(book.name, extension)
+            let bookLocation = Path.Combine(seriesLocation, bookFullName)
+            File.Move(archievedFileLocation, bookLocation)
+        | None -> printfn "Was not able to find book in the archieve"
+
+        printfn "Downloaded '%s'" book.name
+    }
 
 [<EntryPoint>]
 let main _ =
     let builder = CoconaApp.CreateBuilder()
-    builder.Services.AddTransient<WebClient>() |> ignore
+
+    builder.Services.AddHttpClient() |> ignore
+
     let app = builder.Build()
-    let authorCommand = app.AddCommand("author", Action<int, string, WebClient>(fun authorId outputLocation (client : WebClient)-> 
-        let authorDocument = AuthorPage(authorId) |> loadHtmlDocument
-    
-        let mainDescendants =
-            (authorDocument.DocumentNode.Descendants("div")
-                |> List.ofSeq)
-    
-        let mainNodeOption =
-            (mainDescendants
-                |> List.filter isMainNode
-                |> List.tryExactlyOne)
-    
-        let authorNodeOption =
-            (mainDescendants
-                |> List.filter (fun node -> node.HasClass "news_title")
-                |> List.tryExactlyOne)
-    
-        let authorName =
-            match authorNodeOption with
-            | Some node -> node.FirstChild.InnerHtml
-            | None -> authorId.ToString()
-    
-        printfn "Located author name as '%s'" authorName
-    
-        match mainNodeOption with
-        | Some mainNode ->
-            let descendants = mainNode.Descendants() |> List.ofSeq
-            let items = descendants |> List.choose parseAuthorItemNode
-            let serieses = processItemsList items
-    
-            printfn
-                "Found '%i' serieses with '%i' total books"
-                serieses.Length
-                (List.sumBy (fun series -> series.books.Length) serieses)
-    
-            Console.WriteLine "Please, insert location for file download (default is C:\\)"
-    
-            let location =
-                if outputLocation = "" then
-                    $"C:\\{authorName}"
-                else
-                    outputLocation
-    
-            Directory.CreateDirectory location |> ignore
-            Console.WriteLine($"Saving files to {location}")
-            let downloaderBase = downloadBookArchieve client
-    
-            List.iter
-                (fun series ->
-                    List.iter (downloadBook (Path.Combine(location, series.name)) downloaderBase) series.books)
-                serieses
-        | None -> printfn "Failed to find any books"
-        client.Dispose()
-    ))
+
+    let authorCommand =
+        app.AddCommand(
+            "author",
+            Action<int, string, IHttpClientFactory> (fun authorId outputLocation (clientFactory: IHttpClientFactory) ->
+                let authorDocument = AuthorPage(authorId) |> loadHtmlDocument
+
+                let mainDescendants =
+                    (authorDocument.DocumentNode.Descendants("div")
+                     |> List.ofSeq)
+
+                let mainNodeOption =
+                    (mainDescendants
+                     |> List.filter isMainNode
+                     |> List.tryExactlyOne)
+
+                let authorNodeOption =
+                    (mainDescendants
+                     |> List.filter (fun node -> node.HasClass "news_title")
+                     |> List.tryExactlyOne)
+
+                let authorName =
+                    match authorNodeOption with
+                    | Some node -> node.FirstChild.InnerHtml
+                    | None -> authorId.ToString()
+
+                printfn "Located author name as '%s'" authorName
+
+                match mainNodeOption with
+                | Some mainNode ->
+                    let descendants = mainNode.Descendants() |> List.ofSeq
+                    let items = descendants |> List.choose parseAuthorItemNode
+                    let serieses = processItemsList items
+
+                    printfn
+                        "Found '%i' serieses with '%i' total books"
+                        serieses.Length
+                        (List.sumBy (fun series -> series.books.Length) serieses)
+
+                    Console.WriteLine "Please, insert location for file download (default is C:\\)"
+
+                    let location =
+                        if outputLocation = "" then
+                            $"C:\\{authorName}"
+                        else
+                            outputLocation
+
+                    Directory.CreateDirectory location |> ignore
+                    Console.WriteLine($"Saving files to {location}")
+                    use client = clientFactory.CreateClient()
+                    let downloaderBase = downloadBookArchieve client
+
+                    List.iter
+                        (fun series ->
+                            List.iter
+                                (fun book ->
+                                    (downloadBook (Path.Combine(location, series.name)) downloaderBase) book
+                                    |> Async.RunSynchronously)
+                                series.books)
+                        serieses
+                | None -> printfn "Failed to find any books")
+        )
+
     app.Run()
     0
