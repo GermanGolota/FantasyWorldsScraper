@@ -4,6 +4,8 @@ open System.IO
 open HtmlAgilityPack
 open System.Collections.Generic
 open System.IO.Compression
+open Cocona
+open Microsoft.Extensions.DependencyInjection
 
 type UrlType =
     | AuthorPage of authorId: int
@@ -142,70 +144,63 @@ let downloadBook seriesLocation downloaderBase (book: Book) =
     printfn "Downloaded '%s'" book.name
 
 [<EntryPoint>]
-let main args =
-    Console.WriteLine "Please, input author id"
-    let author = Console.ReadLine()
-
-    match optionParse author with
-    | Some authorId ->
-        printfn $"Processing author {authorId}"
+let main _ =
+    let builder = CoconaApp.CreateBuilder()
+    builder.Services.AddTransient<WebClient>() |> ignore
+    let app = builder.Build()
+    let authorCommand = app.AddCommand("author", Action<int, string, WebClient>(fun authorId outputLocation (client : WebClient)-> 
         let authorDocument = AuthorPage(authorId) |> loadHtmlDocument
-
+    
         let mainDescendants =
             (authorDocument.DocumentNode.Descendants("div")
-             |> List.ofSeq)
-
+                |> List.ofSeq)
+    
         let mainNodeOption =
             (mainDescendants
-             |> List.filter isMainNode
-             |> List.tryExactlyOne)
-
+                |> List.filter isMainNode
+                |> List.tryExactlyOne)
+    
         let authorNodeOption =
             (mainDescendants
-             |> List.filter (fun node -> node.HasClass "news_title")
-             |> List.tryExactlyOne)
-
+                |> List.filter (fun node -> node.HasClass "news_title")
+                |> List.tryExactlyOne)
+    
         let authorName =
             match authorNodeOption with
             | Some node -> node.FirstChild.InnerHtml
             | None -> authorId.ToString()
-
+    
         printfn "Located author name as '%s'" authorName
-
+    
         match mainNodeOption with
         | Some mainNode ->
             let descendants = mainNode.Descendants() |> List.ofSeq
             let items = descendants |> List.choose parseAuthorItemNode
             let serieses = processItemsList items
-
+    
             printfn
                 "Found '%i' serieses with '%i' total books"
                 serieses.Length
                 (List.sumBy (fun series -> series.books.Length) serieses)
-
+    
             Console.WriteLine "Please, insert location for file download (default is C:\\)"
-            let inputLocation = Console.ReadLine()
-
+    
             let location =
-                (if inputLocation = "" then
-                     $"C:\\{authorName}"
-                 else
-                     inputLocation)
-
+                if outputLocation = "" then
+                    $"C:\\{authorName}"
+                else
+                    outputLocation
+    
             Directory.CreateDirectory location |> ignore
             Console.WriteLine($"Saving files to {location}")
-            use client = new WebClient()
             let downloaderBase = downloadBookArchieve client
-
+    
             List.iter
                 (fun series ->
                     List.iter (downloadBook (Path.Combine(location, series.name)) downloaderBase) series.books)
                 serieses
-
-            0
-        | None -> 1
-
-
-    | None ->
-        printfn "Failed to parse author id. Please, use just author id number"
-        1
+        | None -> printfn "Failed to find any books"
+        client.Dispose()
+    ))
+    app.Run()
+    0
