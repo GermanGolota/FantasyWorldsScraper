@@ -56,26 +56,13 @@ let noneStrToNone str =
     else
         Some str
 
-let parseBook (node: HtmlNode) =
-    match
-        node.GetAttributeValue("href", "none")
-        |> noneStrToNone
-        with
-    | Some url ->
-        match tryParseBookId url with
-        | Some bookId ->
-            match node.Descendants("h3")
-                  |> List.ofSeq
-                  |> List.tryExactlyOne
-                with
-            | Some titleNode ->
-                Some
-                    { name = titleNode.InnerHtml
-                      id = bookId }
-            | None -> None
-        | None -> None
-
-    | None -> None
+let parseBook (node: HtmlNode) : Book option =
+    let bookId = node.GetAttributeValue("href", "none") |> noneStrToNone |> Option.map tryParseBookId |> Option.flatten;
+    let titleNode = node.Descendants("h3") |> List.ofSeq |> List.tryExactlyOne;
+    Option.map2 (fun id (node: HtmlNode)-> { 
+        name = node.InnerHtml
+        id = id 
+    }) bookId titleNode
 
 let parseAuthorItemNode (node: HtmlNode) =
     match node.Name with
